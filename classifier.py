@@ -120,7 +120,7 @@ net = utils.ResNet(2,3)
 net.load_params(os.path.join(path_net,'bestnet2'),ctx=ctx)
 data_array_clock = nd.concatenate(utils.img_list_clock)
 data_array_crocodile = nd.concatenate(utils.img_list_crocodile)
-threshold = 0.4
+threshold = 0.2
 
 
 # function to print the images that looks like clock and crocodile at the sanme time 
@@ -138,10 +138,10 @@ def print_similar_image(data_array ,label_target , net , threshold , ctx):
         for n , prob in enumerate(outputs):
             if prob[label_target] > threshold:
                 plt.imshow(((data_array[i + n + 1].asnumpy().transpose(1,2,0)+1.0)*127.5).astype(np.uint8)) 
-                plt.show()
+            plt.show()    
         i += batch_size
-    print(outputs)
-print_similar_image(data_array_clock , 1 , net , threshold , ctx)
+ 
+print_similar_image(data_array_clock , 1 , net , threshold*1.2 , ctx)
 print_similar_image(data_array_crocodile , 0 , net , threshold , ctx)
     
 
