@@ -24,7 +24,7 @@ for _,_,files in os.walk(path_clock):
         img_dir = os.path.join(path_clock , file_name)
         img_arr = mx.image.imread(img_dir)
         img_arr = nd.transpose(img_arr,(2,0,1))
-        img_arr = (img_arr.astype(np.float32)/127.5-1)
+        img_arr = (img_arr.astype(np.float32)/255)
         img_arr = nd.array(img_arr.reshape((1,)+img_arr.shape))
         img_list.append(img_arr)
         img_list_clock.append(img_arr)
@@ -35,18 +35,18 @@ for _,_,files in os.walk(path_crocodile):
         img_dir = os.path.join(path_crocodile , file_name)
         img_arr = mx.image.imread(img_dir)
         img_arr = nd.transpose(img_arr,(2,0,1))
-        img_arr = (img_arr.astype(np.float32)/127.5-1)
+        img_arr = (img_arr.astype(np.float32)/255)
         img_arr = nd.array(img_arr.reshape((1,)+img_arr.shape))
         img_list.append(img_arr)
         img_list_crocodile.append(img_arr)
 
+size = 28
 train_augs=[
         image.HorizontalFlipAug(.5),
-        image.BrightnessJitterAug(.5),
-        image.HueJitterAug(.5),
-        image.RandomCropAug((28,28)),
+        image.ColorJitterAug(.5,.5,.5),
+        image.RandomCropAug((size,size)),
         ]
-test_augs=[image.CenterCropAug((28,28))]
+test_augs=[image.CenterCropAug((size,size))]
 
 def apply_aug_list(img,augs):
     for f in augs:
@@ -64,31 +64,32 @@ def try_gpu():
 
 def visualize(img_arr):
     #from CHW transpose to format HWC
-    plt.imshow(((img_arr.asnumpy().transpose(1,2,0)+1.0)*127.5).astype(np.uint8)) 
+    plt.imshow((img_arr.asnumpy().transpose(1,2,0)*255).astype(np.uint8)) 
     plt.axis('off')
 
 
 def evaluate_accuracy(data_iterator, net, ctx):
-    acc = nd.array([0])
-    n = 0
+    acc = 0.0
+    n = 0.0
     if isinstance(data_iterator, mx.io.NDArrayIter):
         data_iterator.reset()
     for batch in data_iterator:
         data = batch.data[0].as_in_context(ctx)
         label = batch.label[0].as_in_context(ctx)
-        
-
-        acc += sum((net(data).argmax(axis=1)==label)).asscalar()
+        acc += sum((net(data).argmax(axis=1)==label))
         n += label.size
         
     return acc.asscalar()/n
 
 
-def train(train_data, test_data, batch_size,net, loss, trainer, ctx, num_epochs, print_batches=None):
+def train(train_data, test_data, batch_size , net, loss, trainer, ctx, num_epochs, print_batches=None):
     print("Start training on ", ctx)
     his_testacc=[]
     for epoch in range(num_epochs):
+        test_acc = evaluate_accuracy(test_data, net, ctx)
+        his_testacc.append(test_acc)
         train_loss, train_acc, n, m = 0.0, 0.0, 0.0, 0.0
+        
         if isinstance(train_data, mx.io.NDArrayIter):
             train_data.reset()
         start = time()
@@ -98,6 +99,7 @@ def train(train_data, test_data, batch_size,net, loss, trainer, ctx, num_epochs,
             trainer.set_learning_rate(trainer.learning_rate*.05)
         if epoch == (num_epochs*3/4-1):
             trainer.set_learning_rate(trainer.learning_rate*.05)
+
         for batch in train_data:
             data = batch.data[0].as_in_context(ctx)
             label = batch.label[0].as_in_context(ctx)
@@ -115,8 +117,7 @@ def train(train_data, test_data, batch_size,net, loss, trainer, ctx, num_epochs,
 #                n, train_loss/n, train_acc/m
 #            ))
 
-        test_acc = evaluate_accuracy(test_data, net, ctx)
-        his_testacc.append(test_acc)
+
         print("Epoch %d. Loss: %.3f, Train acc %.6f, Test acc %.3f, Time %.1f sec" % (
             epoch, train_loss/n, train_acc/m, test_acc, time() - start
         ))
@@ -187,4 +188,105 @@ class ResNet(nn.Block):
             if self.verbose:
                 print('Block %d output: %s'%(i+1, out.shape))
         return out
-    
+
+def Perceptron(num_class):
+    net = nn.Sequential()
+    with net.name_scope():
+#        net.add(nn.Conv2D(1,3,padding=1))
+        net.add(nn.Flatten())
+        net.add(nn.Dropout(.5))
+        net.add(nn.Dense(256))
+        net.add(nn.BatchNorm())
+        net.add(nn.Activation('relu'))
+        net.add(nn.Dense(num_class))
+    return net
+
+#===============define a pretrained network======
+from mxnet.gluon.model_zoo import vision as models
+pretrained_net = models.resnet18_v2(pretrained=True)
+from mxnet import init
+finetune_net = models.resnet18_v2(classes=2)
+finetune_net.features = pretrained_net.features
+finetune_net.output.initialize(init.Xavier())
+
+
+
+
+
+class DHash(object):
+    @staticmethod
+    def calculate_hash(image):
+        """
+        计算图片的dHash值
+        :param image: PIL.Image
+        :return: dHash值,string类型
+        """
+        difference = DHash.__difference(image)
+        # 转化为16进制(每个差值为一个bit,每8bit转为一个16进制)
+        decimal_value = 0
+        hash_string = ""
+        for index, value in enumerate(difference):
+            if value:  # value为0, 不用计算, 程序优化
+                decimal_value += value * (2 ** (index % 8))
+            if index % 8 == 7:  # 每8位的结束
+                hash_string += str(hex(decimal_value)[2:].rjust(2, "0"))  # 不足2位以0填充。0xf=>0x0f
+                decimal_value = 0
+        return hash_string
+
+    @staticmethod
+    def hamming_distance(first, second):
+        """
+        计算两张图片的汉明距离(基于dHash算法)
+        :param first: Image或者dHash值(str)
+        :param second: Image或者dHash值(str)
+        :return: hamming distance. 值越大,说明两张图片差别越大,反之,则说明越相似
+        """
+        # A. dHash值计算汉明距离
+        if isinstance(first, str):
+            return DHash.__hamming_distance_with_hash(first, second)
+
+        # B. image计算汉明距离
+        hamming_distance = 0
+        image1_difference = DHash.__difference(first)
+        image2_difference = DHash.__difference(second)
+        for index, img1_pix in enumerate(image1_difference):
+            img2_pix = image2_difference[index]
+            if img1_pix != img2_pix:
+                hamming_distance += 1
+        return hamming_distance
+
+    @staticmethod
+    def __difference(image):
+        """
+        *Private method*
+        计算image的像素差值
+        :param image: PIL.Image
+        :return: 差值数组。0、1组成
+        """
+        resize_width = 9
+        resize_height = 8
+        # 1. resize to (9,8)
+        smaller_image = image.resize((resize_width, resize_height))
+        # 2. 灰度化 Grayscale
+        grayscale_image = smaller_image.convert("L")
+        # 3. 比较相邻像素
+        pixels = list(grayscale_image.getdata())
+        difference = []
+        for row in range(resize_height):
+            row_start_index = row * resize_width
+            for col in range(resize_width - 1):
+                left_pixel_index = row_start_index + col
+                difference.append(pixels[left_pixel_index] > pixels[left_pixel_index + 1])
+        return difference
+
+    @staticmethod
+    def __hamming_distance_with_hash(dhash1, dhash2):
+        """
+        *Private method*
+        根据dHash值计算hamming distance
+        :param dhash1: str
+        :param dhash2: str
+        :return: 汉明距离(int)
+        """
+        difference = (int(dhash1, 16)) ^ (int(dhash2, 16))
+        return bin(difference).count("1")
