@@ -3,7 +3,10 @@
 
 ## Description
 - A resnet of 20 layers as a classifier , with 10 cross validation , the average training accuracy is : 0.9278 , 
-the average test accuracy is : 0.5030 , and the highest accuracy of the entire data is :0.9240.
+the average test accuracy is : 0.5030 , and the highest accuracy of the entire data is :0.9240.（with customized resnet)
+- The average training accuracy is : 0.9992 , the average test accuracy is : 0.5220 
+The best net is net3 , accuracy of the entire data is :0.9060 (with pretrained resnet on Imagenet)
+
 - With this classifier , find two examples that are similar with clock and crocodile at the same time(it depends on classifier 
 and a hyperparameter "threshold")
 
